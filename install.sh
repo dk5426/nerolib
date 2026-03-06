@@ -1,6 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
+# Detect active environment
+CURRENT_ENV=${CONDA_DEFAULT_ENV:-"base"}
+TARGET_ENV="nerolib"
+
+# If we are in an active environment that isn't 'base', use it
+if [ "$CURRENT_ENV" != "base" ]; then
+    echo "Active environment '$CURRENT_ENV' detected. Installing into '$CURRENT_ENV'..."
+    TARGET_ENV=$CURRENT_ENV
+else
+    echo "No active environment detected (base). Defaulting to '$TARGET_ENV'..."
+fi
+
 # Find mamba or conda
 MAMBA_EXE=$(which mamba || which micromamba || true)
 CONDA_EXE=$(which conda || true)
@@ -24,16 +36,15 @@ else
     exit 1
 fi
 
-# Install/Update nerolib dependencies
-echo "Updating nerolib environment..."
-if $SOLVER_EXE info --envs | grep -q "nerolib"; then
-    $SOLVER_EXE env update -n nerolib -f environment.yml --prune
+# Install/Update dependencies
+echo "Updating environment '$TARGET_ENV'..."
+if $SOLVER_EXE info --envs | grep -q "$TARGET_ENV"; then
+    $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune
 else
-    $SOLVER_EXE env create -f environment.yml
+    $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV"
 fi
 
-# Use SOLVER_EXE for the rest of the script
-RUN_CMD="$SOLVER_EXE run -n nerolib"
+RUN_CMD="$SOLVER_EXE run -n $TARGET_ENV"
 
 # Get environment prefix
 NEROLIB_CONDA_ENV=$($RUN_CMD printenv CONDA_PREFIX)
