@@ -1,0 +1,10 @@
+name: nerolib
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pinocchio
+  - pybind11
+  - spdlog
+  - catch2
+  - cmake
