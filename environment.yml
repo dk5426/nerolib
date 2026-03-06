@@ -8,3 +8,6 @@ dependencies:
   - spdlog
   - catch2
   - cmake
+  - boost
+  - gxx
+  - cxx-compiler

@@ -47,7 +47,7 @@ fi
 RUN_CMD="$SOLVER_EXE run -n $TARGET_ENV"
 
 # Get environment prefix
-NEROLIB_CONDA_ENV=$($RUN_CMD printenv CONDA_PREFIX)
+NEROLIB_CONDA_ENV=$($SOLVER_EXE info --envs | grep -w "$TARGET_ENV" | awk '{print $NF}')
 echo "NEROLIB_CONDA_ENV=$NEROLIB_CONDA_ENV"
 
 # Install ruckig
