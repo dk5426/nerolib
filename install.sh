@@ -39,16 +39,22 @@ fi
 # Install/Update dependencies into target environment
 echo "Updating environment '$TARGET_ENV'..."
 if $SOLVER_EXE info --envs | grep -q "^$TARGET_ENV "; then
-    $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune -y
+    $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune -y || true
 else
-    $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV" -y
+    $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV" -y || true
 fi
 
-# Get environment prefix directly (no conda run)
-ENV_PREFIX=$($SOLVER_EXE info --envs | grep -E "^$TARGET_ENV " | awk '{print $NF}')
-if [ -z "$ENV_PREFIX" ]; then
-    # Fallback: look for active env path
-    ENV_PREFIX=$($SOLVER_EXE info --envs | grep "\*" | awk '{print $NF}')
+# Get environment prefix: prefer CONDA_PREFIX (set by `conda run`) so we
+# always target the correct env even when two envs share the same name.
+if [ -n "${CONDA_PREFIX:-}" ]; then
+    ENV_PREFIX="$CONDA_PREFIX"
+    echo "Using active CONDA_PREFIX: $ENV_PREFIX"
+else
+    ENV_PREFIX=$($SOLVER_EXE info --envs | grep -E "^$TARGET_ENV " | awk '{print $NF}' | head -n1)
+    if [ -z "$ENV_PREFIX" ]; then
+        # Fallback: look for active env path
+        ENV_PREFIX=$($SOLVER_EXE info --envs | grep "\*" | awk '{print $NF}')
+    fi
 fi
 echo "ENV_PREFIX=$ENV_PREFIX"
 
