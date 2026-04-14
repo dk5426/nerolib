@@ -39,9 +39,9 @@ fi
 # Install/Update dependencies into target environment
 echo "Updating environment '$TARGET_ENV'..."
 if $SOLVER_EXE info --envs | grep -q "^$TARGET_ENV "; then
-    $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune
+    $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune -y
 else
-    $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV"
+    $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV" -y
 fi
 
 # Get environment prefix directly (no conda run)
