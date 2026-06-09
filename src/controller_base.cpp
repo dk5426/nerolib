@@ -3,7 +3,8 @@
 
 NeroController::NeroController(ControllerConfig controller_config)
     : controller_config_(controller_config),
-      nero_interface_(controller_config.interface_name, controller_config.gripper_on),
+      nero_interface_(controller_config.interface_name, controller_config.gripper_on,
+                      controller_config.firmware_version),
       solver_(controller_config.urdf_path),
       otg_(1.0 / controller_config.controller_freq_hz),
       gain_(controller_config.default_kp, controller_config.default_kd),

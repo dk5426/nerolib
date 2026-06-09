@@ -1,6 +1,7 @@
 #include "common.h"
 #include "config.h"
 #include "controller_base.h"
+#include "nero_interface.h"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -8,6 +9,11 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(_nerolib, m) {
+  py::enum_<FirmwareVersion>(m, "FirmwareVersion")
+      .value("DEFAULT", FirmwareVersion::DEFAULT)
+      .value("V111", FirmwareVersion::V111)
+      .value("V112", FirmwareVersion::V112)
+      .export_values();
   py::class_<JointState>(m, "JointState")
       .def(py::init<>())
       .def(
@@ -50,6 +56,7 @@ PYBIND11_MODULE(_nerolib, m) {
       .value("LINEAR", MoveMode::LINEAR)
       .value("CIRCULAR", MoveMode::CIRCULAR)
       .value("MIT", MoveMode::MIT)
+      .value("CPV", MoveMode::CPV)
       .export_values();
 
   py::class_<NeroController>(m, "NeroController")
@@ -88,5 +95,6 @@ PYBIND11_MODULE(_nerolib, m) {
       .def_readwrite("gravity_compensation",
                      &ControllerConfig::gravity_compensation)
       .def_readwrite("gravity_comp_scale", &ControllerConfig::gravity_comp_scale)
-      .def_readwrite("gripper_on", &ControllerConfig::gripper_on);
+      .def_readwrite("gripper_on", &ControllerConfig::gripper_on)
+      .def_readwrite("firmware_version", &ControllerConfig::firmware_version);
 }

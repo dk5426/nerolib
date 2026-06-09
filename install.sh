@@ -36,12 +36,14 @@ else
     exit 1
 fi
 
-# Install/Update dependencies into target environment
+# Install/Update dependencies into target environment.
+# Use CONDA_ALWAYS_YES instead of -y because some conda versions do not
+# recognise the -y flag on the env subcommands.
 echo "Updating environment '$TARGET_ENV'..."
-if $SOLVER_EXE info --envs | grep -q "^$TARGET_ENV "; then
-    $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune -y || true
+if $SOLVER_EXE info --envs | grep -qE "^$TARGET_ENV[[:space:]]"; then
+    CONDA_ALWAYS_YES=true $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune
 else
-    $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV" -y || true
+    CONDA_ALWAYS_YES=true $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV"
 fi
 
 # Get environment prefix: prefer CONDA_PREFIX (set by `conda run`) so we

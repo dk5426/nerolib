@@ -1,6 +1,7 @@
 from ._nerolib import (
     NeroController,
     ControllerConfig,
+    FirmwareVersion,
     Gain,
     JointState,
     ControlMode,
@@ -10,6 +11,7 @@ from ._nerolib import (
 __all__ = [
     "NeroController",
     "ControllerConfig",
+    "FirmwareVersion",
     "Gain",
     "JointState",
     "ControlMode",

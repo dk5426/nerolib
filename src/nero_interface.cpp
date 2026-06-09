@@ -164,8 +164,10 @@ void reset_gripper(NeroInterface &nero_interface, float timeout_sec) {
         NeroInterface
 ********************************/
 
-NeroInterface::NeroInterface(std::string interface_name, bool gripper_active)
-    : control_mode_(ControlMode::STANDBY), arm_status_(ArmStatus::NORMAL) {
+NeroInterface::NeroInterface(std::string interface_name, bool gripper_active,
+                             FirmwareVersion fw_version)
+    : control_mode_(ControlMode::STANDBY), arm_status_(ArmStatus::NORMAL),
+      firmware_version_(fw_version) {
   socketcan_ = new SocketCAN();
   socketcan_->open(interface_name.c_str());
   socketcan_->start_receiver_thread();
@@ -214,7 +216,19 @@ void NeroInterface::can_receive_frame(const can_frame_t *frame) {
   } else if (frame->can_id == 0x2A1) {
     control_mode_.store(ControlMode(can_data_to_uint8_t(frame->data)));
     arm_status_.store(ArmStatus(can_data_to_uint8_t(frame->data + 1)));
-    move_mode_.store(MoveMode(can_data_to_uint8_t(frame->data + 2)));
+    uint8_t wire_move = can_data_to_uint8_t(frame->data + 2);
+    MoveMode parsed_mode;
+    if (firmware_version_ == FirmwareVersion::DEFAULT) {
+      // DEFAULT: MIT wire code = 0x04 (matches MoveMode::MIT)
+      parsed_mode = MoveMode(wire_move);
+    } else {
+      // V111/V112: MIT wire code = 0x06; CPV wire code = 0x05
+      if (wire_move == 0x06)
+        parsed_mode = MoveMode::MIT;
+      else
+        parsed_mode = MoveMode(wire_move);
+    }
+    move_mode_.store(parsed_mode);
   } else if (frame->can_id == 0x2A8) {
     gripper_pos_.store(can_data_to_int32_t(frame->data) /
                        (GRIPPER_ANGLE_MAX * 1000.0f * 1000.0f));
@@ -312,10 +326,20 @@ void NeroInterface::set_emergency_stop(EmergencyStop emergency_stop) {
 void NeroInterface::set_arm_mode(ControlMode ctrl_mode, MoveMode move_mode,
                                  uint8_t speed_rate,
                                  ArmController arm_controller) {
+  // Translate MoveMode::MIT to the firmware-specific wire code.
+  // DEFAULT:  MIT wire value = 0x04
+  // V111/V112: MIT wire value = 0x06
+  uint8_t wire_move_mode;
+  if (move_mode == MoveMode::MIT) {
+    wire_move_mode = (firmware_version_ == FirmwareVersion::DEFAULT) ? 0x04 : 0x06;
+  } else {
+    wire_move_mode = static_cast<uint8_t>(move_mode);
+  }
+
   can_frame_t frame;
   frame.can_id = 0x151;
   frame.data[0] = static_cast<uint8_t>(ctrl_mode);
-  frame.data[1] = static_cast<uint8_t>(move_mode);
+  frame.data[1] = wire_move_mode;
   frame.data[2] = speed_rate;
   frame.data[3] = static_cast<uint8_t>(arm_controller);
   frame.data[4] = 0x00; // offline trajectory hold time
@@ -341,13 +365,13 @@ void NeroInterface::set_to_damping_mode() {
   }
 }
 
-/*
- * This code first converts the float values to integers of varying bit
- * widths, and packs them into a CAN frame for each motor in the array.
- * pos (16-bit)|spd (12-bit)|kp (12-bit)|kd (12-bit)|t (8-bit)|crc (4-bit)
- * crc is calculated by XORing the first 7 bytes of the CAN frame. A simple
- * checksum.
- */
+// Per-joint torque limits for DEFAULT firmware (mirrors pyAgxArm scaling).
+// Joints 1-2: ±24 Nm input, scaled by 0.75 → ±18 Nm encoded range.
+// Joints 3-4: ±16 Nm input, scaled by 1.125 → ±18 Nm encoded range.
+// Joints 5-7: ±8 Nm input, scaled by 2.25 → ±18 Nm encoded range.
+static constexpr float DEFAULT_T_INPUT_MAX[MOTOR_DOF] = {24.0f, 24.0f, 16.0f, 16.0f, 8.0f, 8.0f, 8.0f};
+static constexpr float DEFAULT_T_SCALE[MOTOR_DOF]     = {0.75f, 0.75f, 1.125f, 1.125f, 2.25f, 2.25f, 2.25f};
+
 void NeroInterface::set_joint_pos_vel_torque(const JointState &joint_state,
                                              const Gain &gain) {
   if (get_move_mode() != MoveMode::MIT) {
@@ -356,38 +380,27 @@ void NeroInterface::set_joint_pos_vel_torque(const JointState &joint_state,
   }
 
   for (uint8_t motor_id = 0; motor_id < MOTOR_DOF; ++motor_id) {
-    // Check bounds for all parameters
     if (joint_state.pos[motor_id] < POS_MIN ||
         joint_state.pos[motor_id] > POS_MAX) {
-      spdlog::error("Warning: Position {} out of bounds [{}, {}] for motor {}",
+      spdlog::error("Position {} out of bounds [{}, {}] for motor {}",
                     joint_state.pos[motor_id], POS_MIN, POS_MAX, motor_id);
       continue;
     }
     if (joint_state.vel[motor_id] < VEL_MIN ||
         joint_state.vel[motor_id] > VEL_MAX) {
-      spdlog::error("Warning: Velocity {} out of bounds [{}, {}] for motor {}",
+      spdlog::error("Velocity {} out of bounds [{}, {}] for motor {}",
                     joint_state.vel[motor_id], VEL_MIN, VEL_MAX, motor_id);
       continue;
     }
     if (gain.kp[motor_id] < KP_MIN || gain.kp[motor_id] > KP_MAX) {
-      spdlog::error("Warning: Kp {} out of bounds [{}, {}] for motor {}",
+      spdlog::error("Kp {} out of bounds [{}, {}] for motor {}",
                     gain.kp[motor_id], KP_MIN, KP_MAX, motor_id);
       continue;
     }
     if (gain.kd[motor_id] < KD_MIN || gain.kd[motor_id] > KD_MAX) {
-      spdlog::error("Warning: Kd {} out of bounds [{}, {}] for motor {}",
+      spdlog::error("Kd {} out of bounds [{}, {}] for motor {}",
                     gain.kd[motor_id], KD_MIN, KD_MAX, motor_id);
       continue;
-    }
-    // t_ff expects torque in Nm directly, no conversion to Amperes needed.
-    float torque_scaled = joint_state.torque[motor_id];
-    // Clamp torque to valid range instead of skipping the command entirely.
-    // Skipping leaves the motor uncontrolled (zero torque), which is dangerous
-    // for gravity compensation where partial torque is better than none.
-    if (torque_scaled < T_MIN || torque_scaled > T_MAX) {
-      spdlog::warn("Torque {:.2f} (scaled {:.2f}) clamped to [{}, {}] for motor {}",
-                    joint_state.torque[motor_id], torque_scaled, T_MIN, T_MAX, motor_id);
-      torque_scaled = std::max(T_MIN, std::min(T_MAX, torque_scaled));
     }
 
     can_frame_t frame;
@@ -395,24 +408,50 @@ void NeroInterface::set_joint_pos_vel_torque(const JointState &joint_state,
 
     int pos_ref = float_to_int(joint_state.pos[motor_id], POS_MIN, POS_MAX, 16);
     int spd_ref = float_to_int(joint_state.vel[motor_id], VEL_MIN, VEL_MAX, 12);
-    int kp_int = float_to_int(gain.kp[motor_id], KP_MIN, KP_MAX, 12);
-    int kd_int = float_to_int(gain.kd[motor_id], KD_MIN, KD_MAX, 12);
-    int t_ref =
-        float_to_int(torque_scaled, T_MIN, T_MAX, 8);
+    int kp_int  = float_to_int(gain.kp[motor_id], KP_MIN, KP_MAX, 12);
+    int kd_int  = float_to_int(gain.kd[motor_id], KD_MIN, KD_MAX, 12);
 
-    frame.data[0] = (pos_ref >> 8) & 0xFF; // High byte
-    frame.data[1] = pos_ref & 0xFF;        // Low byte
+    frame.data[0] = (pos_ref >> 8) & 0xFF;
+    frame.data[1] = pos_ref & 0xFF;
     frame.data[2] = (spd_ref >> 4) & 0xFF;
     frame.data[3] = (((spd_ref & 0xF) << 4) & 0xF0) | ((kp_int >> 8) & 0x0F);
     frame.data[4] = kp_int & 0xFF;
     frame.data[5] = (kd_int >> 4) & 0xFF;
-    frame.data[6] = (((kd_int & 0xF) << 4) & 0xF0) | ((t_ref >> 4) & 0x0F);
 
-    uint8_t crc =
-        (frame.data[0] ^ frame.data[1] ^ frame.data[2] ^ frame.data[3] ^
-         frame.data[4] ^ frame.data[5] ^ frame.data[6]) &
-        0x0F;
-    frame.data[7] = ((t_ref << 4) & 0xF0) | crc;
+    if (firmware_version_ == FirmwareVersion::DEFAULT) {
+      // DEFAULT firmware: 8-bit t_ff with per-joint scaling + 4-bit CRC.
+      // Valid input range: ±24 Nm (joints 1-2), ±16 Nm (3-4), ±8 Nm (5-7).
+      float t_max_in = DEFAULT_T_INPUT_MAX[motor_id];
+      float torque = static_cast<float>(joint_state.torque[motor_id]);
+      if (torque < -t_max_in || torque > t_max_in) {
+        spdlog::warn("Torque {:.2f} Nm clamped to [{}, {}] for motor {}",
+                     torque, -t_max_in, t_max_in, motor_id);
+        torque = std::max(-t_max_in, std::min(t_max_in, torque));
+      }
+      float t_scaled = torque * DEFAULT_T_SCALE[motor_id]; // fits in [-18, 18]
+      int t_ref = float_to_int(t_scaled, -18.0f, 18.0f, 8);
+
+      // Layout: kd[3:0] | t_ff[7:4], then t_ff[3:0] | crc[3:0]
+      frame.data[6] = (((kd_int & 0xF) << 4) & 0xF0) | ((t_ref >> 4) & 0x0F);
+      uint8_t crc = (frame.data[0] ^ frame.data[1] ^ frame.data[2] ^
+                     frame.data[3] ^ frame.data[4] ^ frame.data[5] ^
+                     frame.data[6]) & 0x0F;
+      frame.data[7] = ((t_ref << 4) & 0xF0) | crc;
+    } else {
+      // V111/V112 firmware: 12-bit t_ff, no per-joint scaling, no CRC.
+      // Valid input range: ±16 Nm for all joints.
+      float torque = static_cast<float>(joint_state.torque[motor_id]);
+      if (torque < -16.0f || torque > 16.0f) {
+        spdlog::warn("Torque {:.2f} Nm clamped to [-16, 16] for motor {}",
+                     torque, motor_id);
+        torque = std::max(-16.0f, std::min(16.0f, torque));
+      }
+      int t_ref = float_to_int(torque, -16.0f, 16.0f, 12);
+
+      // Layout: kd[3:0] | t_ff[11:8], then t_ff[7:0]
+      frame.data[6] = (((kd_int & 0xF) << 4) & 0xF0) | ((t_ref >> 8) & 0x0F);
+      frame.data[7] = t_ref & 0xFF;
+    }
 
     transmit(frame);
     sleep_us(COMMUNICATION_DELAY);

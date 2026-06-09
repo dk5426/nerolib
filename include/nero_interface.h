@@ -2,6 +2,7 @@
 #define NERO_INTERFACE_H
 
 #include "common.h"
+#include "config.h"
 #include "socket_can.h"
 
 #include <array>
@@ -114,6 +115,7 @@ enum class MoveMode : uint8_t {
   LINEAR = 0x02,
   CIRCULAR = 0x03,
   MIT = 0x04,
+  CPV = 0x05,  // firmware >= 1.12 only
 };
 
 enum class ArmController : uint8_t {
@@ -130,7 +132,8 @@ enum class EmergencyStop : uint8_t {
 
 class NeroInterface {
 public:
-  NeroInterface(std::string interface_name, bool gripper_active = true);
+  NeroInterface(std::string interface_name, bool gripper_active = true,
+                FirmwareVersion fw_version = FirmwareVersion::DEFAULT);
   ~NeroInterface() { delete socketcan_; }
 
   void enable_arm();
@@ -159,9 +162,7 @@ public:
 
   void standby(MoveMode move_mode, ArmController arm_controller);
   std::string get_nero_interface_name() { return interface_name_; }
-  std::string get_nero_firmware_version() {
-    return "1.0.0";
-  } // TODO: get firmware version
+  FirmwareVersion get_firmware_version() const { return firmware_version_; }
 
   bool is_gripper_active() { return gripper_active_; }
   bool is_arm_enabled();
@@ -175,6 +176,7 @@ private:
   SocketCAN *socketcan_;
   bool can_connection_status_ = false;
   bool gripper_active_ = true;
+  FirmwareVersion firmware_version_ = FirmwareVersion::DEFAULT;
   void can_receive_frame(const can_frame_t *frame);
   void transmit(can_frame_t &frame);
 

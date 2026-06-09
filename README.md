@@ -9,6 +9,7 @@ Nerolib is a library for AgileX Nero arms. It implements a minimal hardware inte
 - [x] Velocity, acceleration and jerk limits with [Ruckig]() on-the-go trajectory generation.
 - [x] Python bindings
 - [x] Gripper control
+- [x] Multi-firmware support (DEFAULT ≤ 1.10, V111 == 1.11, V112 ≥ 1.12)
 - [ ] nero-cli for easier state management
 
 ## Installation
@@ -44,10 +45,11 @@ make -j
 You can use Nerolib directly in C++ or through its Python bindings. Here is a very simple example that moves the robot to a desired joint position:
 
 ```python
-from nerolib import NeroController, ControllerConfig
+from nerolib import NeroController, ControllerConfig, FirmwareVersion
 
 controller_config = ControllerConfig()
 controller_config.urdf_path = "" # set urdf path for gravity compensation, you can use the one in urdf/
+controller_config.firmware_version = FirmwareVersion.V112  # set to match your arm's firmware
 nero_controller = NeroController(controller_config)
 
 if not nero_controller.start(): # WARNING: this will power down the robot, and it will fall if not in neutral position.
@@ -63,6 +65,34 @@ time.sleep(1)
 
 nero_controller.stop() # WARNING: this puts the robot in damping mode, slowly lowering. Then, it prompts user to press Enter to disable motors after the arm is safe.
 ```
+
+### Firmware Version
+
+AgileX has changed the Nero CAN protocol across firmware versions. Set `firmware_version` in `ControllerConfig` to match the firmware running on your arm:
+
+| Constant | `software_version` reported by arm | MIT mode code | t_ff encoding |
+|----------|------------------------------------|---------------|---------------|
+| `FirmwareVersion.DEFAULT` | ≤ 1.10 | `0x04` | 8-bit, per-joint scaling, CRC |
+| `FirmwareVersion.V111` | == 1.11 | `0x06` | 12-bit, ±16 Nm, no CRC |
+| `FirmwareVersion.V112` | ≥ 1.12 | `0x06` | 12-bit, ±16 Nm, no CRC + CPV mode |
+
+> **Firmware vs software version:** AgileX calls these *firmware* versions, but the arm self-reports the same number as `software_version` in its CAN status packet. The two terms refer to the same thing — use whatever is printed on the arm's controller box or returned by the AgileX configuration tool.
+
+If `firmware_version` is not set it defaults to `FirmwareVersion.DEFAULT`, so existing code continues to work without changes.
+
+To check the version number your arm reports, use pyAgxArm (or the AgileX configuration tool):
+
+```python
+# Using pyAgxArm to read the arm's self-reported version:
+# robot.get_firmware()["software_version"]  →  e.g. "1.12"
+```
+
+Then pick the matching constant from the table above.
+
+**Torque limits by firmware:**
+
+- `DEFAULT`: ±24 Nm (joints 1-2), ±16 Nm (joints 3-4), ±8 Nm (joints 5-7)
+- `V111` / `V112`: ±16 Nm all joints
 
 ## Nero Interface
 
@@ -91,6 +121,7 @@ Nero arms use CAN as communication protocol. `nero_interface.h` defines the hard
 - `NeroInterface::get_arm_status()`: Check `ArmStatus` enum for possible states. Expected to be `NORMAL`.
 - `NeroInterface::get_control_mode()`: Check `ControlMode` enum. Expected to be `STANDBY` or `CAN_COMMAND`
 - `NeroInterface::get_gripper_status()`: `GripperStatus` shows gripper error and enabled status.
-- `NeroInterface::get_move_mode()`: Check `MoveMode` enum. Expected to be `MIT` in MIT mode or `JOINT` in joint control mode.
+- `NeroInterface::get_move_mode()`: Check `MoveMode` enum. Expected to be `MIT` in MIT mode or `JOINT` in joint control mode. `CPV` is available on firmware V112+.
+- `NeroInterface::get_firmware_version()`: Returns the `FirmwareVersion` the interface was constructed with.
 - `NeroInterface::is_arm_enabled()`
 - `NeroInterface::is_gripper_enabled()`

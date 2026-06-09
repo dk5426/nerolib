@@ -2,6 +2,20 @@
 #define CONFIG_H
 
 #include "common.h"
+#include <cstdint>
+
+// Nero arm firmware version selector.
+// These correspond to the arm's self-reported "software_version" field
+// (e.g. pyAgxArm get_firmware()["software_version"]). AgileX calls these
+// firmware versions; the arm's CAN packet calls the same field "software_version".
+//   DEFAULT : software_version <= 1.10
+//   V111    : software_version == 1.11
+//   V112    : software_version >= 1.12
+enum class FirmwareVersion : uint8_t {
+  DEFAULT = 0,
+  V111 = 1,
+  V112 = 2,
+};
 
 class ControllerConfig {
 public:
@@ -17,6 +31,7 @@ public:
   bool gravity_compensation;
   float gravity_comp_scale;
   bool gripper_on;
+  FirmwareVersion firmware_version;
 
   ControllerConfig(
       std::string interface_name = "can0",
@@ -33,14 +48,19 @@ public:
       std::array<double, MOTOR_DOF> home_position = {0.0, 0.0, 0.0, 0.0, 0.0,
                                                      0.0, 0.0},
       int over_current_cnt_max = 20, double controller_freq_hz = 250.0,
-      bool gravity_compensation = true, float gravity_comp_scale = 1.0f, bool gripper_on = false)
+      bool gravity_compensation = true, float gravity_comp_scale = 1.0f,
+      bool gripper_on = false,
+      FirmwareVersion firmware_version = FirmwareVersion::DEFAULT)
       : interface_name(interface_name), urdf_path(urdf_path),
         default_kp(default_kp), default_kd(default_kd),
         joint_vel_max(joint_vel_max), joint_acc_max(joint_acc_max),
         home_position(home_position),
         over_current_cnt_max(over_current_cnt_max),
         controller_freq_hz(controller_freq_hz),
-        gravity_compensation(gravity_compensation), gravity_comp_scale(gravity_comp_scale), gripper_on(gripper_on) {}
+        gravity_compensation(gravity_compensation),
+        gravity_comp_scale(gravity_comp_scale),
+        gripper_on(gripper_on),
+        firmware_version(firmware_version) {}
 };
 
 #endif // CONFIG_H
