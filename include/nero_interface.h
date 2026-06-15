@@ -140,6 +140,7 @@ public:
   void enable_gripper();
   void disable_arm();
   void disable_gripper();
+  void clear_joint_error(uint8_t joint_index = 8);
 
   void set_to_damping_mode();
   void set_emergency_stop(EmergencyStop emergency_stop);

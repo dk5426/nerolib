@@ -71,6 +71,7 @@ PYBIND11_MODULE(_nerolib, m) {
       .def("enable_gravity_compensation", &NeroController::enableGravityCompensation, py::arg("enable"))
       .def("set_gravity_comp_scale", &NeroController::setGravityCompScale, py::arg("scale"))
       .def("set_mode", &NeroController::setMode, py::arg("control_mode"), py::arg("move_mode"))
+      .def("clear_joint_error", &NeroController::clearJointError, py::arg("joint_index") = 8)
       .def("set_target", &NeroController::setTarget,
            py::arg("new_target_pos"),
            py::arg("new_target_gripper_pos"),

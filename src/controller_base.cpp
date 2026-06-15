@@ -138,6 +138,10 @@ void NeroController::setMode(ControlMode control_mode, MoveMode move_mode) {
   spdlog::info("Mode updated: ControlMode={}, MoveMode={}", (int)control_mode, (int)move_mode);
 }
 
+void NeroController::clearJointError(uint8_t joint_index) {
+  nero_interface_.clear_joint_error(joint_index);
+}
+
 void NeroController::driverProtection() {
   bool over_current = false;
   for (int i = 0; i < MOTOR_DOF; ++i) {

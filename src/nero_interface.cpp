@@ -62,8 +62,8 @@ void disable_arm(NeroInterface &nero_interface, float timeout_sec) {
     spdlog::info("disable_arm poll: ctrl_mode={} arm_status={} is_enabled={}",
                  static_cast<uint8_t>(cm), static_cast<uint8_t>(as), is_enabled);
     
-    // Success if we are in STANDBY or if all motors are clearly disabled
-    if ((cm == ControlMode::STANDBY && as == ArmStatus::NORMAL) || !is_enabled) {
+    // Success if we are in STANDBY or if all motors are clearly disabled, AND the status has recovered to NORMAL
+    if (as == ArmStatus::NORMAL && (cm == ControlMode::STANDBY || !is_enabled)) {
       break;
     }
     if ((get_time_ms() - start_time).count() > timeout_sec * 1000) {
@@ -105,6 +105,7 @@ void enable_arm(NeroInterface &nero_interface, float timeout_sec) {
 }
 
 void reset_arm(NeroInterface &nero_interface, float timeout_sec) {
+  nero_interface.clear_joint_error(8); // 8 = all joints
   disable_arm(nero_interface, timeout_sec);
   enable_arm(nero_interface, timeout_sec);
   spdlog::info("Arm reset successfully");
@@ -289,6 +290,21 @@ void NeroInterface::disable_arm() {
   // Also switch to STANDBY mode so listeners polling get_control_mode() see STANDBY
   set_arm_mode(ControlMode::STANDBY, MoveMode::POSITION, 0, ArmController::POSITION_VELOCITY);
   sleep_ms(400); // wait for low-speed feedback to reflect new enable status
+}
+
+void NeroInterface::clear_joint_error(uint8_t joint_index) {
+  can_frame_t frame;
+  frame.can_id = 0x475;
+  frame.data[0] = joint_index;
+  frame.data[1] = 0x00;
+  frame.data[2] = 0x00;
+  frame.data[3] = 0x00;
+  frame.data[4] = 0x00;
+  frame.data[5] = 0xAE; // clear joint error
+  frame.data[6] = 0x00;
+  frame.data[7] = 0x00;
+  transmit(frame);
+  sleep_ms(100);
 }
 
 void NeroInterface::enable_gripper() {
