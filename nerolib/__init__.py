@@ -1,21 +1,42 @@
 from ._nerolib import (
-    NeroController,
+    ArmController,
+    ArmStatus,
     ControllerConfig,
+    ControlMode,
+    DriverStatus,
+    EmergencyStop,
     FirmwareVersion,
     Gain,
+    GripperStatus,
     JointState,
-    ControlMode,
     MoveMode,
+    NeroController,
+    NeroInterface,
+    disable_arm,
+    enable_arm,
+    query_firmware_version,
+    reset_arm,
 )
 
+__version__ = "1.1.0"
+
 __all__ = [
-    "NeroController",
+    "ArmController",
+    "ArmStatus",
+    "ControlMode",
     "ControllerConfig",
+    "DriverStatus",
+    "EmergencyStop",
     "FirmwareVersion",
     "Gain",
+    "GripperStatus",
     "JointState",
-    "ControlMode",
     "MoveMode",
+    "NeroController",
+    "NeroInterface",
+    "disable_arm",
+    "enable_arm",
+    "query_firmware_version",
+    "reset_arm",
+    "__version__",
 ]
-
-

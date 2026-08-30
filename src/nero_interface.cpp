@@ -2,6 +2,7 @@
 #include "common.h"
 #include "spdlog/spdlog.h"
 #include <cstdint>
+#include <cstdio>
 #include <stdexcept>
 
 #define COMMUNICATION_DELAY 10 // 10us
@@ -62,8 +63,8 @@ void disable_arm(NeroInterface &nero_interface, float timeout_sec) {
     spdlog::info("disable_arm poll: ctrl_mode={} arm_status={} is_enabled={}",
                  static_cast<uint8_t>(cm), static_cast<uint8_t>(as), is_enabled);
     
-    // Success if we are in STANDBY or if all motors are clearly disabled, AND the status has recovered to NORMAL
-    if (as == ArmStatus::NORMAL && (cm == ControlMode::STANDBY || !is_enabled)) {
+    // Success if we are in STANDBY or if all motors are clearly disabled
+    if ((cm == ControlMode::STANDBY && as == ArmStatus::NORMAL) || !is_enabled) {
       break;
     }
     if ((get_time_ms() - start_time).count() > timeout_sec * 1000) {
@@ -105,7 +106,6 @@ void enable_arm(NeroInterface &nero_interface, float timeout_sec) {
 }
 
 void reset_arm(NeroInterface &nero_interface, float timeout_sec) {
-  nero_interface.clear_joint_error(8); // 8 = all joints
   disable_arm(nero_interface, timeout_sec);
   enable_arm(nero_interface, timeout_sec);
   spdlog::info("Arm reset successfully");
@@ -183,9 +183,9 @@ NeroInterface::NeroInterface(std::string interface_name, bool gripper_active,
   this->gripper_active_ = gripper_active;
 }
 
-void NeroInterface::transmit(can_frame_t &frame) {
+void NeroInterface::transmit(can_frame_t &frame, uint8_t dlc) {
   if (socketcan_->is_open()) {
-    frame.can_dlc = 8;
+    frame.can_dlc = dlc;
     socketcan_->transmit(&frame);
   } else {
     spdlog::error("Cannot transmit CAN frame: CAN bus not open");
@@ -230,6 +230,16 @@ void NeroInterface::can_receive_frame(const can_frame_t *frame) {
         parsed_mode = MoveMode(wire_move);
     }
     move_mode_.store(parsed_mode);
+  } else if (frame->can_id == 0x4AF) {
+    // Firmware info reply: bytes 6 and 7 are the major and minor software
+    // version. The arm's own request frame comes back on this same ID when the
+    // socket has loopback enabled, so discard anything with a zero major --
+    // no real firmware reports version 0.x. (pyAgxArm drops the same frame by
+    // matching the exact request pattern.)
+    if (frame->data[6] != 0) {
+      reported_firmware_.store(static_cast<uint16_t>(
+          (static_cast<uint16_t>(frame->data[6]) << 8) | frame->data[7]));
+    }
   } else if (frame->can_id == 0x2A8) {
     gripper_pos_.store(can_data_to_int32_t(frame->data) /
                        (GRIPPER_ANGLE_MAX * 1000.0f * 1000.0f));
@@ -239,6 +249,55 @@ void NeroInterface::can_receive_frame(const can_frame_t *frame) {
 }
 
 // Public functions
+
+void NeroInterface::request_firmware() {
+  can_frame_t frame;
+  frame.can_id = 0x4AF;
+  std::fill(std::begin(frame.data), std::end(frame.data), 0);
+  frame.data[0] = 0x01; // fixed one-byte request, same as pyAgxArm
+  transmit(frame, 1);
+}
+
+std::string NeroInterface::query_firmware_version(float timeout_sec) {
+  reported_firmware_.store(0xFFFF);
+  const auto start_time = get_time_ms();
+  auto expired = [&] {
+    return (get_time_ms() - start_time).count() > timeout_sec * 1000;
+  };
+
+  // The reply is a single unsolicited frame, so a dropped request would
+  // otherwise burn the whole timeout. Re-ask every 200 ms until it lands.
+  while (!expired()) {
+    request_firmware();
+    for (int i = 0; i < 10 && !expired(); ++i) {
+      const uint16_t packed = reported_firmware_.load();
+      if (packed != 0xFFFF) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%u.%02u",
+                      static_cast<unsigned>((packed >> 8) & 0xFF),
+                      static_cast<unsigned>(packed & 0xFF));
+        return std::string(buf);
+      }
+      sleep_ms(20);
+    }
+  }
+  spdlog::warn("No firmware reply from the arm within {:.1f}s", timeout_sec);
+  return "";
+}
+
+FirmwareVersion
+NeroInterface::firmware_version_from_string(const std::string &version) {
+  int major = 0, minor = 0;
+  if (std::sscanf(version.c_str(), "%d.%d", &major, &minor) != 2) {
+    spdlog::warn("Unparseable firmware version '{}', assuming DEFAULT", version);
+    return FirmwareVersion::DEFAULT;
+  }
+  // Compare numerically rather than lexically, so 1.9 < 1.10 < 1.11 holds.
+  const int code = major * 100 + minor;
+  if (code >= 112) return FirmwareVersion::V112;
+  if (code == 111) return FirmwareVersion::V111;
+  return FirmwareVersion::DEFAULT;
+}
 
 bool NeroInterface::is_arm_enabled() {
   for (int i = 0; i < MOTOR_DOF; i++) {
@@ -290,21 +349,6 @@ void NeroInterface::disable_arm() {
   // Also switch to STANDBY mode so listeners polling get_control_mode() see STANDBY
   set_arm_mode(ControlMode::STANDBY, MoveMode::POSITION, 0, ArmController::POSITION_VELOCITY);
   sleep_ms(400); // wait for low-speed feedback to reflect new enable status
-}
-
-void NeroInterface::clear_joint_error(uint8_t joint_index) {
-  can_frame_t frame;
-  frame.can_id = 0x475;
-  frame.data[0] = joint_index;
-  frame.data[1] = 0x00;
-  frame.data[2] = 0x00;
-  frame.data[3] = 0x00;
-  frame.data[4] = 0x00;
-  frame.data[5] = 0xAE; // clear joint error
-  frame.data[6] = 0x00;
-  frame.data[7] = 0x00;
-  transmit(frame);
-  sleep_ms(100);
 }
 
 void NeroInterface::enable_gripper() {

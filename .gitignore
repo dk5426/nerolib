@@ -1,0 +1,37 @@
+# Build directories
+build/
+build-*/
+_skbuild/
+dist/
+*.egg-info/
+
+# Compiled extension modules and shared libraries.
+# These are produced by `pip install -e .` / install.sh -- never commit them.
+*.so
+*.dylib
+*.dll
+*.o
+*.a
+
+# CMake leftovers (build/ already covers most of these; these catch in-source runs)
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv / conda
+.uv/
+
+# Editor and OS cruft
+.DS_Store
+.vscode/
+.idea/
+*.swp

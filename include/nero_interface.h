@@ -140,7 +140,6 @@ public:
   void enable_gripper();
   void disable_arm();
   void disable_gripper();
-  void clear_joint_error(uint8_t joint_index = 8);
 
   void set_to_damping_mode();
   void set_emergency_stop(EmergencyStop emergency_stop);
@@ -163,7 +162,19 @@ public:
 
   void standby(MoveMode move_mode, ArmController arm_controller);
   std::string get_nero_interface_name() { return interface_name_; }
+
+  // The version this interface was CONFIGURED with -- i.e. which wire format
+  // it speaks. This is not read from the arm; see query_firmware_version().
   FirmwareVersion get_firmware_version() const { return firmware_version_; }
+
+  // Ask the arm what firmware it is actually running (CAN 0x4AF, the same
+  // exchange pyAgxArm's get_firmware() uses). Returns e.g. "1.12", or an
+  // empty string if the arm did not answer within timeout_sec.
+  // Read-only: sends one request frame and never touches the motors.
+  std::string query_firmware_version(float timeout_sec = 1.0f);
+
+  // Map a reported version string ("1.12") onto the constant to configure.
+  static FirmwareVersion firmware_version_from_string(const std::string &version);
 
   bool is_gripper_active() { return gripper_active_; }
   bool is_arm_enabled();
@@ -179,7 +190,9 @@ private:
   bool gripper_active_ = true;
   FirmwareVersion firmware_version_ = FirmwareVersion::DEFAULT;
   void can_receive_frame(const can_frame_t *frame);
-  void transmit(can_frame_t &frame);
+  // dlc defaults to 8; the firmware request is a genuine 1-byte frame.
+  void transmit(can_frame_t &frame, uint8_t dlc = 8);
+  void request_firmware();
 
   // state management
   std::array<std::atomic<float>, MOTOR_DOF> qpos_;
@@ -194,6 +207,9 @@ private:
   std::atomic<float> gripper_pos_;
   std::atomic<float> gripper_effort_;
   std::atomic<GripperStatus> gripper_status_;
+  // Software version reported on CAN 0x4AF, packed as (major << 8) | minor.
+  // 0xFFFF means the arm has not answered since the last request.
+  std::atomic<uint16_t> reported_firmware_{0xFFFF};
 };
 
 void enable_arm(NeroInterface &nero_interface, float timeout_sec = 5.0f);

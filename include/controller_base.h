@@ -14,7 +14,10 @@ public:
   NeroController(ControllerConfig controller_config);
   ~NeroController();
 
-  void resetToHome();
+  void resetToHome(double timeout_sec = 20.0,
+                   double position_tolerance = 0.02,
+                   double velocity_tolerance = 0.05,
+                   double settle_time_sec = 0.5);
   bool start();
   void stop();
   bool isRunning() const;
@@ -33,7 +36,6 @@ public:
   void enableGravityCompensation(bool enable);
   void setGravityCompScale(float scale);
   void setMode(ControlMode control_mode, MoveMode move_mode);
-  void clearJointError(uint8_t joint_index = 8);
 
 private:
   const ControllerConfig controller_config_;
