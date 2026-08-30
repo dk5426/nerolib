@@ -6,25 +6,45 @@
 # `nerolib` environment, build and install the vendored Ruckig into that
 # environment, and finally install the Nerolib Python package.
 #
-#   ./install.sh              # interactive
-#   ./install.sh --yes        # never prompt (CI / provisioning)
-#   ./install.sh --env myenv  # install into a differently named environment
+#   ./install.sh                        # interactive
+#   ./install.sh --yes                  # never prompt (CI / provisioning)
+#   ./install.sh --env myenv            # install into a named conda env
+#   ./install.sh --prefix ./envs/nero   # install into an env by path
+#
+# --env takes a conda environment NAME; --prefix takes a PATH, for envs made
+# with `conda create -p ...` that have no name. A --env value containing a "/"
+# is treated as a prefix.
 #
 set -euo pipefail
 
 ASSUME_YES=0
 TARGET_ENV=""
+TARGET_PREFIX=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -y|--yes)   ASSUME_YES=1; shift ;;
         --env)      TARGET_ENV="${2:-}"; shift 2 ;;
+        --prefix|-p) TARGET_PREFIX="${2:-}"; shift 2 ;;
         -h|--help)
-            sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
+
+# Validate arguments before doing any work, so a typo fails instantly rather
+# than after a conda solve.
+if [ -n "$TARGET_PREFIX" ] && [ -n "$TARGET_ENV" ]; then
+    echo "ERROR: pass either --env NAME or --prefix PATH, not both." >&2
+    exit 1
+fi
+
+# A name containing a path separator is really a prefix; accept it either way
+# rather than failing later with a confusing "environment not found".
+case "$TARGET_ENV" in
+    */*) TARGET_PREFIX="$TARGET_ENV"; TARGET_ENV="" ;;
+esac
 
 confirm() {
     # confirm <prompt>  -> 0 if the user agreed (or --yes was passed)
@@ -96,7 +116,10 @@ if [ -n "$MAMBA_EXE" ]; then
     echo "Using mamba/micromamba at $SOLVER_EXE"
 else
     SOLVER_EXE=$CONDA_EXE
-    echo "Using conda at $SOLVER_EXE"
+    # After sourcing conda.sh, `conda` is a shell function, so `command -v`
+    # returns the bare name rather than a path. Show the real binary if we
+    # can find one, so the log names something the user can go look at.
+    echo "Using conda at $(type -P conda 2>/dev/null || echo "$SOLVER_EXE (shell function)")"
     # Enable the libmamba solver: the default solver is painfully slow on the
     # constrained hardware these arms usually run on.
     if $CONDA_EXE config --show-sources | grep -q "solver: libmamba"; then
@@ -112,43 +135,81 @@ fi
 # 2. Choose the target environment
 # ---------------------------------------------------------------------------
 
-if [ -z "$TARGET_ENV" ]; then
-    CURRENT_ENV=${CONDA_DEFAULT_ENV:-"base"}
-    if [ "$CURRENT_ENV" != "base" ]; then
-        echo "Active environment '$CURRENT_ENV' detected. Installing into '$CURRENT_ENV'..."
-        TARGET_ENV=$CURRENT_ENV
+if [ -n "$TARGET_PREFIX" ]; then
+    # -------- Path-addressed environment ---------------------------------
+    # An env created with `conda create -p PATH` has no name, so the name
+    # lookup below cannot see it. Address it by prefix throughout.
+    #
+    # Normalise to an absolute path: conda resolves a relative --prefix
+    # against the cwd, but we later hand this path to pip and cmake, which
+    # may run elsewhere.
+    case "$TARGET_PREFIX" in
+        /*) : ;;
+        *)
+            # Canonicalise via cd/pwd only when the parent already exists.
+            # For a brand new env the parent often does not -- and `cd` into a
+            # missing directory yields an empty prefix, turning ./envs/nero
+            # into /nero. Fall back to prefixing $PWD in that case.
+            _parent="$(dirname "$TARGET_PREFIX")"
+            if [ -d "$_parent" ]; then
+                TARGET_PREFIX="$(cd "$_parent" && pwd)/$(basename "$TARGET_PREFIX")"
+            else
+                TARGET_PREFIX="$PWD/${TARGET_PREFIX#./}"
+            fi
+            unset _parent
+            ;;
+    esac
+
+    echo "Updating environment at '$TARGET_PREFIX'..."
+    if [ -d "$TARGET_PREFIX/conda-meta" ]; then
+        CONDA_ALWAYS_YES=true $SOLVER_EXE env update -p "$TARGET_PREFIX" -f environment.yml --prune
     else
-        TARGET_ENV="nerolib"
-        echo "No active environment detected (base). Defaulting to '$TARGET_ENV'..."
+        CONDA_ALWAYS_YES=true $SOLVER_EXE env create -f environment.yml -p "$TARGET_PREFIX"
     fi
-fi
-
-# Install/Update dependencies into target environment.
-# Use CONDA_ALWAYS_YES instead of -y because some conda versions do not
-# recognise the -y flag on the env subcommands.
-echo "Updating environment '$TARGET_ENV'..."
-if $SOLVER_EXE info --envs | grep -qE "^$TARGET_ENV[[:space:]]"; then
-    CONDA_ALWAYS_YES=true $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune
+    ENV_PREFIX="$TARGET_PREFIX"
+    # `conda activate` takes a path as happily as a name.
+    ACTIVATE_HINT="$TARGET_PREFIX"
 else
-    CONDA_ALWAYS_YES=true $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV"
-fi
-
-# Get environment prefix: prefer CONDA_PREFIX (set by `conda run`) so we
-# always target the correct env even when two envs share the same name --
-# but only when it actually belongs to the environment we are installing into.
-if [ -n "${CONDA_PREFIX:-}" ] && [ "${CONDA_DEFAULT_ENV:-}" = "$TARGET_ENV" ]; then
-    ENV_PREFIX="$CONDA_PREFIX"
-    echo "Using active CONDA_PREFIX: $ENV_PREFIX"
-else
-    ENV_PREFIX=$($SOLVER_EXE info --envs | grep -E "^$TARGET_ENV[[:space:]]" | awk '{print $NF}' | head -n1)
-    if [ -z "$ENV_PREFIX" ]; then
-        # Fallback: look for active env path
-        ENV_PREFIX=$($SOLVER_EXE info --envs | grep "\*" | awk '{print $NF}')
+    # -------- Named environment ------------------------------------------
+    if [ -z "$TARGET_ENV" ]; then
+        CURRENT_ENV=${CONDA_DEFAULT_ENV:-"base"}
+        if [ "$CURRENT_ENV" != "base" ]; then
+            echo "Active environment '$CURRENT_ENV' detected. Installing into '$CURRENT_ENV'..."
+            TARGET_ENV=$CURRENT_ENV
+        else
+            TARGET_ENV="nerolib"
+            echo "No active environment detected (base). Defaulting to '$TARGET_ENV'..."
+        fi
     fi
+
+    # Install/Update dependencies into target environment.
+    # Use CONDA_ALWAYS_YES instead of -y because some conda versions do not
+    # recognise the -y flag on the env subcommands.
+    echo "Updating environment '$TARGET_ENV'..."
+    if $SOLVER_EXE info --envs | grep -qE "^$TARGET_ENV[[:space:]]"; then
+        CONDA_ALWAYS_YES=true $SOLVER_EXE env update -n "$TARGET_ENV" -f environment.yml --prune
+    else
+        CONDA_ALWAYS_YES=true $SOLVER_EXE env create -f environment.yml -n "$TARGET_ENV"
+    fi
+
+    # Get environment prefix: prefer CONDA_PREFIX (set by `conda run`) so we
+    # always target the correct env even when two envs share the same name --
+    # but only when it actually belongs to the environment we are installing into.
+    if [ -n "${CONDA_PREFIX:-}" ] && [ "${CONDA_DEFAULT_ENV:-}" = "$TARGET_ENV" ]; then
+        ENV_PREFIX="$CONDA_PREFIX"
+        echo "Using active CONDA_PREFIX: $ENV_PREFIX"
+    else
+        ENV_PREFIX=$($SOLVER_EXE info --envs | grep -E "^$TARGET_ENV[[:space:]]" | awk '{print $NF}' | head -n1)
+        if [ -z "$ENV_PREFIX" ]; then
+            # Fallback: look for active env path
+            ENV_PREFIX=$($SOLVER_EXE info --envs | grep "\*" | awk '{print $NF}')
+        fi
+    fi
+    ACTIVATE_HINT="$TARGET_ENV"
 fi
 
 if [ -z "$ENV_PREFIX" ] || [ ! -d "$ENV_PREFIX" ]; then
-    echo "ERROR: Could not resolve a prefix for environment '$TARGET_ENV'."
+    echo "ERROR: Could not resolve a prefix for environment '${TARGET_ENV:-$TARGET_PREFIX}'."
     exit 1
 fi
 echo "ENV_PREFIX=$ENV_PREFIX"
@@ -231,7 +292,7 @@ cat <<EOF
 Next steps
 ----------
   1. Activate the environment:
-         conda activate $TARGET_ENV
+         conda activate ${ACTIVATE_HINT}
 
   2. Bring up the CAN interface the arm is on (1 Mbit/s):
          sudo ip link set can0 up type can bitrate 1000000

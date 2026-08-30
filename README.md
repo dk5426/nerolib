@@ -77,12 +77,15 @@ It uses the environment's own `gcc`/`g++` rather than the system toolchain, so y
 Useful flags:
 
 ```bash
-./install.sh --yes            # never prompt; for CI or provisioning scripts
-./install.sh --env myenv      # install into a differently named environment
+./install.sh --yes                      # never prompt; for CI or provisioning
+./install.sh --env myenv                # install into a named conda env
+./install.sh --prefix ./envs/nero       # install into an env by path
 ./install.sh --help
 ```
 
 If an environment is already active, the script installs into that one instead of creating `nerolib`.
+
+Use `--env` for a normal named environment and `--prefix` for one created with `conda create -p PATH`, which has no name and so cannot be found by name. A `--env` value containing a `/` is treated as a prefix, and a relative prefix is resolved to an absolute path before being handed to pip and CMake.
 
 ### Manual install
 
